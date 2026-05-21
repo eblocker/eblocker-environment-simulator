@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -18,6 +19,9 @@ func main() {
 }
 
 func run() int {
+	logArp := flag.Bool("arp", false, "log ARP messages")
+	flag.Parse()
+
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
@@ -29,9 +33,14 @@ func run() int {
 		return 1
 	}
 
+	// ARP handler needs the logArp flag:
+	arpHandler := func(ctx2 context.Context, client2 *redis.Client, payload string) {
+		handleArpRequest(ctx2, client2, payload, *logArp)
+	}
+
 	var wg sync.WaitGroup
 	wg.Go(func() { startProcessing(ctx, client, simulator.ScriptWrapperInput, handleScriptWrapperRequest) })
-	wg.Go(func() { startProcessing(ctx, client, simulator.ArpOutput, handleArpRequest) })
+	wg.Go(func() { startProcessing(ctx, client, simulator.ArpOutput, arpHandler) })
 
 	wg.Wait()
 	return 0
@@ -61,7 +70,7 @@ func handleScriptWrapperRequest(ctx context.Context, client *redis.Client, paylo
 		return
 	}
 
-	log.Printf("received callID=%d script=%q args=%v", req.CallID, req.Script, req.Args)
+	log.Printf("[%d] ⮕ %s args=%v", req.CallID, req.Script, req.Args)
 
 	returnCode, err := resolveReturnCode(ctx, client, req.Script)
 	if err != nil {
@@ -74,7 +83,7 @@ func handleScriptWrapperRequest(ctx context.Context, client *redis.Client, paylo
 		return
 	}
 
-	log.Printf("responded callID=%d return=%d", req.CallID, returnCode)
+	log.Printf("[%d] ⬅︎ return=%d", req.CallID, returnCode)
 }
 
 func resolveReturnCode(ctx context.Context, client *redis.Client, script string) (int, error) {
@@ -116,7 +125,7 @@ func isFlagSet(ctx context.Context, client *redis.Client, flagKey string) (bool,
 	}
 }
 
-func handleArpRequest(ctx context.Context, client *redis.Client, payload string) {
+func handleArpRequest(ctx context.Context, client *redis.Client, payload string, logArp bool) {
 	req, err := simulator.ParseArpMessage(payload)
 	if err != nil {
 		log.Printf("received invalid ARP request %s: %v", payload, err)
@@ -152,6 +161,8 @@ func handleArpRequest(ctx context.Context, client *redis.Client, payload string)
 			log.Printf("failed to publish ARP message %s: %v", response, err)
 			return
 		}
-		log.Printf("responded with ARP message %v", rsp)
+		if logArp {
+			log.Printf("⬅︎ ARP message %v", rsp)
+		}
 	}
 }
